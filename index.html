@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Torre de Controle de Produção - Randon</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+    
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #111827; color: #f3f4f6; }
+        
+        .tab-active { border-bottom: 4px solid #ef4444; color: #ef4444; font-weight: bold; }
+        .tab-inactive { color: #9ca3af; border-bottom: 4px solid transparent; }
+        .tab-inactive:hover { color: #f3f4f6; }
+        
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+
+        input[type="date"]::-webkit-calendar-picker-indicator {
+            filter: invert(1);
+        }
+
+        /* Inversão matricial de cores para a Logo Randon Triel-HT em tema escuro */
+        .randon-dark-logo {
+            filter: invert(1) hue-rotate(180deg);
+        }
+    </style>
+</head>
+<body class="antialiased">
+
+    <header class="bg-gray-800 shadow-xl p-4 flex justify-between items-center mb-6 border-b border-gray-700">
+        <div class="flex items-center gap-6">
+            <div class="flex items-center justify-center py-1">
+                <img src="image_57a61a.png" alt="Logo Randon Triel-HT" class="h-14 w-auto object-contain randon-dark-logo" 
+                     onerror="this.style.display='none'; document.getElementById('logo-error').style.display='block';">
+                <span id="logo-error" style="display:none;" class="text-xs text-red-500 font-bold text-center">
+                    Arquivo 'image_57a61a.png'<br>não encontrado na pasta.
+                </span>
+            </div>
+            <h1 class="text-2xl font-bold text-gray-100 border-l-2 pl-6 border-gray-600 tracking-wide">Torre de Controle de Produção</h1>
+        </div>
+    </header>
+
+    <main class="container mx-auto px-4 pb-12">
+        <div class="bg-gray-800 p-4 rounded-lg shadow-md border border-gray-700 mb-6 flex flex-wrap gap-4 items-end justify-between">
+            <div class="flex gap-4 items-end flex-wrap">
+                <div>
+                    <label class="block text-sm font-semibold text-gray-400 mb-1">Filtrar por Data:</label>
+                    <input type="date" id="filterDate" class="bg-gray-700 border border-gray-600 text-white rounded p-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-400 mb-1">Filtrar por OV:</label>
+                    <input type="text" id="filterOV" placeholder="Ex: 5638" class="bg-gray-700 border border-gray-600 text-white rounded p-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 placeholder-gray-400">
+                </div>
+                <button onclick="applyFilters()" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded text-sm transition shadow-md">
+                    Aplicar Filtros
+                </button>
+                <button onclick="clearFilters()" class="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded text-sm transition shadow-md">
+                    Limpar
+                </button>
+            </div>
+            
+            <div class="flex gap-5 border-b border-gray-700 mt-4 md:mt-0 w-full md:w-auto flex-wrap">
+                <button onclick="switchTab('dashboard')" id="tab-dashboard" class="pb-2 px-1 tab-active transition">Dashboard Analítico</button>
+                <button onclick="switchTab('lancamentos')" id="tab-lancamentos" class="pb-2 px-1 tab-inactive transition">Lançamentos de Linha</button>
+                <button onclick="switchTab('historico')" id="tab-historico" class="pb-2 px-1 tab-inactive transition">Histórico de Gargalos</button>
+                <button onclick="switchTab('exportar')" id="tab-exportar" class="pb-2 px-1 tab-inactive transition text-green-500 hover:text-green-400">Exportar Excel</button>
+            </div>
+        </div>
+
+        <div id="view-dashboard" class="block">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div class="bg-gray-800 rounded-lg shadow-md border border-gray-700 p-6 text-center border-t-4 border-t-red-500">
+                    <h2 class="text-sm font-bold text-gray-400 uppercase tracking-wide">Absenteísmo da Equipe (Perda de Disponibilidade MDO)</h2>
+                    <p id="kpi-absenteismo" class="text-4xl font-black text-white mt-2">0,0%</p>
+                </div>
+                <div class="bg-gray-800 rounded-lg shadow-md border border-gray-700 p-6 text-center border-t-4 border-t-blue-500">
+                    <h2 class="text-sm font-bold text-gray-400 uppercase tracking-wide">Aderência ao Cronograma de Entregas (APP)</h2>
+                    <p id="kpi-aderencia" class="text-4xl font-black text-white mt-2">0,0%</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="bg-gray-800 border border-gray-700 p-4 rounded-lg shadow-md">
+                    <h3 class="font-bold text-gray-200 mb-4">Status de Cumprimento de Prazo por Ordem de Venda (OV)</h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm text-left">
+                            <thead class="bg-gray-900 text-gray-300">
+                                <tr>
+                                    <th class="p-2 border border-gray-700">Ordem de Venda (OV)</th>
+                                    <th class="p-2 border border-gray-700 text-center">Pontualidade</th>
+                                </tr>
+                            </thead>
+                            <tbody id="table-status-ov" class="text-gray-300">
+                                </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="bg-gray-800 border border-gray-700 p-4 rounded-lg shadow-md">
+                    <h3 class="font-bold text-gray-200 mb-4 text-center">Gráfico: Performance de Prazo Final</h3>
+                    <canvas id="chartAderencia"></canvas>
+                </div>
+
+                <div class="bg-gray-800 border border-gray-700 p-4 rounded-lg shadow-md">
+                    <h3 class="font-bold text-gray-200 mb-4 flex items-center gap-2">
+                        <span>🏆 Ranking de Restrições: Top 5 Peças Mais Faltantes</span>
+                    </h3>
+                    <div id="podium-gargalos-container" class="space-y-3">
+                        </div>
+                </div>
+
+                <div class="bg-gray-800 border border-gray-700 p-4 rounded-lg shadow-md">
+                    <h3 class="font-bold text-gray-200 mb-4 text-center">Análise de Frequência de Faltas por Componente</h3>
+                    <canvas id="chartGargalos"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div id="view-lancamentos" class="hidden">
+            <div class="bg-gray-800 p-6 rounded-lg shadow-md border border-gray-700 mb-6 border-t-4 border-t-gray-500">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="font-bold text-gray-200 text-lg">Entrada de Dados Diários de Produção (Nuvem)</h3>
+                    <button onclick="clearAllData()" class="bg-red-900/40 hover:bg-red-900 text-red-300 border border-red-700 text-xs py-1 px-3 rounded transition">
+                        Resetar Banco de Dados Cloud
+                    </button>
+                </div>
+                <form id="form-lancamento" class="grid grid-cols-1 md:grid-cols-4 gap-4" onsubmit="addData(event)">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Data de Apuração</label>
+                        <input type="date" id="in_data" required class="w-full bg-gray-700 border border-gray-600 rounded p-1.5 text-sm text-white focus:ring-2 focus:ring-red-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Ordem de Venda (OV)</label>
+                        <input type="text" id="in_ov" required placeholder="Ex: 5638" class="w-full bg-gray-700 border border-gray-600 rounded p-1.5 text-sm text-white focus:ring-2 focus:ring-red-500 outline-none placeholder-gray-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Produto Pronto (Modelo CT)</label>
+                        <input type="text" id="in_modelo" required placeholder="Ex: CT VOLVO" class="w-full bg-gray-700 border border-gray-600 rounded p-1.5 text-sm text-white focus:ring-2 focus:ring-red-500 outline-none placeholder-gray-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Início Programado</label>
+                        <input type="date" id="in_inicioPrev" class="w-full bg-gray-700 border border-gray-600 rounded p-1.5 text-sm text-white focus:ring-2 focus:ring-red-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Início Realizado</label>
+                        <input type="date" id="in_inicioReal" class="w-full bg-gray-700 border border-gray-600 rounded p-1.5 text-sm text-white focus:ring-2 focus:ring-red-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Saída Programada</label>
+                        <input type="date" id="in_saidaPrev" class="w-full bg-gray-700 border border-gray-600 rounded p-1.5 text-sm text-white focus:ring-2 focus:ring-red-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Saída Realizada</label>
+                        <input type="date" id="in_saidaReal" class="w-full bg-gray-700 border border-gray-600 rounded p-1.5 text-sm text-white focus:ring-2 focus:ring-red-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Capacidade Planejada (Horas MDO)</label>
+                        <input type="number" step="0.1" id="in_horasPlan" placeholder="Ex: 44.0" class="w-full bg-gray-700 border border-gray-600 rounded p-1.5 text-sm text-white focus:ring-2 focus:ring-red-500 outline-none placeholder-gray-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Horas de Ausência (Faltas/Atestados)</label>
+                        <input type="number" step="0.1" id="in_horasFaltas" placeholder="Ex: 12.0" class="w-full bg-gray-700 border border-gray-600 rounded p-1.5 text-sm text-white focus:ring-2 focus:ring-red-500 outline-none placeholder-gray-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Causa da Restrição</label>
+                        <select id="in_motivo" class="w-full bg-gray-700 border border-gray-600 rounded p-1.5 text-sm text-white focus:ring-2 focus:ring-red-500 outline-none">
+                            <option value="">Selecione...</option>
+                            <option value="Falta de peças">Falta de peças</option>
+                            <option value="Falta de pessoas">Falta de pessoas</option>
+                            <option value="Falta de programação">Falta de programação</option>
+                            <option value="Nenhum">Nenhum</option>
+                        </select>
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Componente Faltante (Especificação/Código)</label>
+                        <input type="text" id="in_peca" placeholder="Ex: CHAPA LISA" class="w-full bg-gray-700 border border-gray-600 rounded p-1.5 text-sm text-white focus:ring-2 focus:ring-red-500 outline-none placeholder-gray-500">
+                    </div>
+                    <div class="md:col-span-4 flex justify-end mt-2">
+                        <button type="submit" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded shadow-md transition">
+                            Salvar Registro na Nuvem
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="bg-gray-800 rounded-lg shadow-md overflow-x-auto border border-gray-700">
+                <table class="w-full text-xs text-left whitespace-nowrap">
+                    <thead class="bg-gray-900 text-gray-300">
+                        <tr>
+                            <th class="p-3 border-r border-gray-700">Data</th>
+                            <th class="p-3 border-r border-gray-700">Ordem de Venda (OV)</th>
+                            <th class="p-3 border-r border-gray-700">Modelo do Produto</th>
+                            <th class="p-3 border-r border-gray-700">Início Prog.</th>
+                            <th class="p-3 border-r border-gray-700">Início Real</th>
+                            <th class="p-3 border-r border-gray-700">Saída Prog.</th>
+                            <th class="p-3 border-r border-gray-700">Saída Real</th>
+                            <th class="p-3 border-r border-gray-700">Horas Prog.</th>
+                            <th class="p-3 border-r border-gray-700">Horas Perdas</th>
+                            <th class="p-3 border-r border-gray-700 bg-red-900/50 text-red-200">% Absenteísmo</th>
+                            <th class="p-3 border-r border-gray-700 bg-blue-900/50 text-blue-200">Aderência</th>
+                            <th class="p-3 border-r border-gray-700">Restrição Encontrada</th>
+                            <th class="p-3">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-main-data" class="text-gray-300 divide-y divide-gray-700">
+                        </tbody>
+                    <tfoot class="bg-gray-900 font-bold text-gray-200 border-t border-gray-700" id="table-main-footer">
+                        </tfoot>
+                </table>
+            </div>
+        </div>
+
+        <div id="view-historico" class="hidden">
+            <div class="bg-gray-800 p-6 rounded-lg shadow-md border border-gray-700">
+                <h3 class="font-bold text-gray-200 text-lg mb-4 border-b border-gray-700 pb-2">📋 Linha do Tempo: Histórico Descritivo de Componentes Faltantes</h3>
+                <div id="log-historico-container" class="space-y-3 max-h-[600px] overflow-y-auto pr-2">
+                    </div>
+            </div>
+        </div>
+
+        <div id="view-exportar" class="hidden">
+            <div class="bg-gray-800 p-8 rounded-lg shadow-md border border-gray-700 text-center py-16">
+                <h2 class="text-3xl font-bold text-gray-100 mb-4">Exportar Histórico de Produção</h2>
+                <p class="text-gray-400 mb-10 max-w-2xl mx-auto">
+                    Faça o download de todos os registros e indicadores analíticos armazenados no banco Cloud em formato nativo do Microsoft Excel (.xlsx).
+                </p>
+                <button onclick="exportToExcel()" class="bg-green-600 hover:bg-green-500 text-white font-bold py-4 px-10 rounded-lg shadow-lg transition flex items-center justify-center mx-auto gap-3 text-lg border border-green-700">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Exportar Relatório Excel (.xlsx)
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // ==========================================
+        //  CONFIGURAÇÃO INTEGRADA DO SEU FIREBASE:
+        // ==========================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyDnmil3SZTCYEc9UoG_50KJwf84QbsL8Yo",
+            authDomain: "torre-controle-ct.firebaseapp.com",
+            databaseURL: "https://torre-controle-ct-default-rtdb.firebaseio.com",
+            projectId: "torre-controle-ct",
+            storageBucket: "torre-controle-ct.firebasestorage.app",
+            messagingSenderId: "910759275536",
+            appId: "1:910759275536:web:6d2faed5ea6e179eacee95"
+        };
+        
+        // Inicialização automática do Realtime Database
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        // Configurações Padrão de Cores do Gráfico
+        Chart.defaults.color = '#9ca3af';
+        const chartOptionsBase = {
+            responsive: true,
+            scales: {
+                x: { grid: { color: '#374151' }, ticks: { color: '#9ca3af' } },
+                y: { grid: { color: '#374151' }, ticks: { color: '#9ca3af' } }
+            },
+            plugins: { legend: { display: false } }
+        };
+
+        let producaoData = [];
+        let filteredData = [];
+        
+        let chartGargalosInstance = null;
+        let chartAderenciaInstance = null;
+
+        // Listener em Tempo Real (Sincronização instantânea entre múltiplos computadores)
+        db.ref('randon_producao_data').on('value', (snapshot) => {
+            const rawData = snapshot.val();
+            // Tratamento contra índices nulos gerados por arrays do Firebase
+            producaoData = Array.isArray(rawData) ? rawData.filter(Boolean) : (rawData ? Object.values(rawData) : []);
+            applyFilters();
+        });
+
+        const formatDate = (dateStr) => {
+            if (!dateStr) return '-';
+            const [y, m, d] = dateStr.split('-');
+            return `${d}/${m}/${y}`;
+        };
+
+        const calcAbsenteismo = (plan, faltas) => plan > 0 ? ((faltas / plan) * 100) : 0;
+        const calcAderencia = (prev, real) => {
+            if (!prev || !real) return 0;
+            return new Date(real) <= new Date(prev) ? 100 : 0; 
+        };
+
+        function switchTab(tab) {
+            document.getElementById('view-dashboard').style.display = tab === 'dashboard' ? 'block' : 'none';
+            document.getElementById('view-lancamentos').style.display = tab === 'lancamentos' ? 'block' : 'none';
+            document.getElementById('view-historico').style.display = tab === 'historico' ? 'block' : 'none';
+            document.getElementById('view-exportar').style.display = tab === 'exportar' ? 'block' : 'none';
+            
+            document.getElementById('tab-dashboard').className = tab === 'dashboard' ? 'pb-2 px-1 tab-active transition' : 'pb-2 px-1 tab-inactive transition';
+            document.getElementById('tab-lancamentos').className = tab === 'lancamentos' ? 'pb-2 px-1 tab-active transition' : 'pb-2 px-1 tab-inactive transition';
+            document.getElementById('tab-historico').className = tab === 'historico' ? 'pb-2 px-1 tab-active transition' : 'pb-2 px-1 tab-inactive transition';
+            document.getElementById('tab-exportar').className = tab === 'exportar' ? 'pb-2 px-1 tab-active transition text-green-500 border-green-500' : 'pb-2 px-1 tab-inactive transition text-green-600 hover:text-green-400';
+        }
+
+        function applyFilters() {
+            const fDate = document.getElementById('filterDate').value;
+            const fOV = document.getElementById('filterOV').value.trim();
+
+            filteredData = producaoData.filter(item => {
+                if (!item) return false;
+                let matchDate = true;
+                let matchOV = true;
+                if (fDate) matchDate = item.data === fDate;
+                if (fOV) matchOV = item.ov.includes(fOV);
+                return matchDate && matchOV;
+            });
+            updateAll();
+        }
+
+        function clearFilters() {
+            document.getElementById('filterDate').value = '';
+            document.getElementById('filterOV').value = '';
+            filteredData = [...producaoData];
+            updateAll();
+        }
+
+        function addData(e) {
+            e.preventDefault();
+            const novoDado = {
+                id: Date.now(),
+                data: document.getElementById('in_data').value,
+                ov: document.getElementById('in_ov').value,
+                modelo: document.getElementById('in_modelo').value,
+                inicioPrev: document.getElementById('in_inicioPrev').value,
+                inicioReal: document.getElementById('in_inicioReal').value,
+                saidaPrev: document.getElementById('in_saidaPrev').value,
+                saidaReal: document.getElementById('in_saidaReal').value,
+                horasPlan: parseFloat(document.getElementById('in_horasPlan').value) || 0,
+                horasFaltas: parseFloat(document.getElementById('in_horasFaltas').value) || 0,
+                motivo: document.getElementById('in_motivo').value,
+                peca: document.getElementById('in_peca').value,
+            };
+            
+            producaoData.push(novoDado);
+            db.ref('randon_producao_data').set(producaoData);
+            
+            document.getElementById('form-lancamento').reset();
+            alert("Registro sincronizado na Nuvem com sucesso!");
+        }
+
+        function deleteItem(id) {
+            if(confirm("Deseja deletar este registro de produção permanentemente da Nuvem?")) {
+                producaoData = producaoData.filter(item => item && item.id !== id);
+                db.ref('randon_producao_data').set(producaoData);
+            }
+        }
+
+        function clearAllData() {
+            if(confirm("ATENÇÃO MASTER: Esta ação apagará permanentemente todos os dados da nuvem. Continuar?")) {
+                producaoData = [];
+                db.ref('randon_producao_data').remove();
+            }
+        }
+
+        function exportToExcel() {
+            if (producaoData.length === 0) {
+                alert("Nenhum dado disponível para gerar a planilha.");
+                return;
+            }
+            const dadosExcel = producaoData.map(item => {
+                const abs = calcAbsenteismo(item.horasPlan, item.horasFaltas);
+                const coder = calcAderencia(item.saidaPrev, item.saidaReal);
+                return {
+                    "Data": formatDate(item.data),
+                    "Ordem de Venda (OV)": item.ov,
+                    "Modelo do Produto (CT)": item.modelo,
+                    "Início Programado": formatDate(item.inicioPrev),
+                    "Início Realizado": formatDate(item.inicioReal),
+                    "Saída Programada": formatDate(item.saidaPrev),
+                    "Saída Realizada": formatDate(item.saidaReal),
+                    "Horas Programadas (MDO)": item.horasPlan,
+                    "Horas Perdas Ausência": item.horasFaltas,
+                    "% Absenteísmo da Equipe": abs.toFixed(1) + "%",
+                    "Aderência ao Prazo Final": coder.toFixed(1) + "%",
+                    "Causa da Restrição": item.motivo || "-",
+                    "Componente Faltante": item.peca || "-"
+                };
+            });
+            const worksheet = XLSX.utils.json_to_sheet(dadosExcel);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "Dados Operacionais");
+            XLSX.writeFile(workbook, "Historico_Torre_Controle_Producao.xlsx");
+        }
+
+        function updateAll() {
+            renderLancamentosTable();
+            updateKPIs();
+            renderGargalosEPodium();
+            renderStatusOV();
+            renderHistoricoLog();
+        }
+
+        function renderLancamentosTable() {
+            const tbody = document.getElementById('table-main-data');
+            const tfoot = document.getElementById('table-main-footer');
+            tbody.innerHTML = '';
+            
+            if(filteredData.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="13" class="p-8 text-center text-gray-500 text-sm">Nenhum registro encontrado no banco de dados.</td></tr>`;
+                tfoot.innerHTML = '';
+                return;
+            }
+
+            let totalPlan = 0, totalFaltas = 0;
+
+            filteredData.forEach(item => {
+                if(!item) return;
+                const abs = calcAbsenteismo(item.horasPlan, item.horasFaltas);
+                const coder = calcAderencia(item.saidaPrev, item.saidaReal);
+                totalPlan += item.horasPlan;
+                totalFaltas += item.horasFaltas;
+
+                tbody.innerHTML += `
+                    <tr class="hover:bg-gray-700 transition text-xs">
+                        <td class="p-2 border-r border-gray-700">${formatDate(item.data)}</td>
+                        <td class="p-2 border-r border-gray-700 text-center font-semibold text-gray-100">${item.ov}</td>
+                        <td class="p-2 border-r border-gray-700">${item.modelo}</td>
+                        <td class="p-2 border-r border-gray-700 text-center">${formatDate(item.inicioPrev)}</td>
+                        <td class="p-2 border-r border-gray-700 text-center">${formatDate(item.inicioReal)}</td>
+                        <td class="p-2 border-r border-gray-700 text-center">${formatDate(item.saidaPrev)}</td>
+                        <td class="p-2 border-r border-gray-700 text-center">${formatDate(item.saidaReal)}</td>
+                        <td class="p-2 border-r border-gray-700 text-right">${item.horasPlan ? item.horasPlan.toFixed(1) : '0.0'}</td>
+                        <td class="p-2 border-r border-gray-700 text-right">${item.horasFaltas ? item.horasFaltas.toFixed(1) : '0.0'}</td>
+                        <td class="p-2 border-r border-gray-700 text-right bg-red-900/20 text-red-400 font-bold">${abs.toFixed(1)}%</td>
+                        <td class="p-2 border-r border-gray-700 text-right bg-blue-900/20 text-blue-400 font-bold">${coder.toFixed(1)}%</td>
+                        <td class="p-2 border-r border-gray-700">${item.motivo || '-'} ${item.peca ? `(${item.peca.toUpperCase()})` : ''}</td>
+                        <td class="p-2 text-center">
+                            <button onclick="deleteItem(${item.id})" class="text-red-400 hover:text-red-600 font-bold px-1">Deletar</button>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            const mediaAbs = totalPlan > 0 ? ((totalFaltas / totalPlan) * 100) : 0;
+            tfoot.innerHTML = `
+                <tr>
+                    <td colspan="7" class="p-3 border-r border-gray-700 text-right text-xs">Total Consolidado / Média Geral</td>
+                    <td class="p-3 border-r border-gray-700 text-right text-xs">${totalPlan.toFixed(1)}</td>
+                    <td class="p-3 border-r border-gray-700 text-right text-xs">${totalFaltas.toFixed(1)}</td>
+                    <td class="p-3 border-r border-gray-700 text-right text-xs text-red-400">${mediaAbs.toFixed(1)}%</td>
+                    <td colspan="3"></td>
+                </tr>
+            `;
+        }
+
+        function updateKPIs() {
+            let totalPlan = 0, totalFaltas = 0;
+            let ovsCount = 0, coderTotal = 0;
+
+            filteredData.forEach(item => {
+                if(!item) return;
+                totalPlan += item.horasPlan;
+                totalFaltas += item.horasFaltas;
+                if (item.saidaPrev && item.saidaReal) {
+                    ovsCount++;
+                    coderTotal += calcAderencia(item.saidaPrev, item.saidaReal);
+                }
+            });
+
+            const kpiAbs = totalPlan > 0 ? ((totalFaltas / totalPlan) * 100) : 0;
+            const kpiAder = ovsCount > 0 ? (coderTotal / ovsCount) : 0;
+
+            document.getElementById('kpi-absenteismo').innerText = `${kpiAbs.toFixed(1).replace('.', ',')}%`;
+            document.getElementById('kpi-aderencia').innerText = `${kpiAder.toFixed(1).replace('.', ',')}%`;
+        }
+
+        function renderGargalosEPodium() {
+            const contagem = {};
+            filteredData.forEach(item => {
+                if (item && item.peca && item.peca.trim() !== '') {
+                    const nome = item.peca.trim().toUpperCase();
+                    contagem[nome] = (contagem[nome] || 0) + 1;
+                }
+            });
+
+            const ranking = Object.keys(contagem).map(key => ({ peca: key, ocorrencias: contagem[key] }));
+            ranking.sort((a, b) => b.ocorrencias - a.ocorrencias);
+
+            const podiumContainer = document.getElementById('podium-gargalos-container');
+            podiumContainer.innerHTML = '';
+
+            if(ranking.length === 0) {
+                podiumContainer.innerHTML = `<p class="text-sm text-gray-500 text-center py-6">Nenhuma restrição ou falta de componentes cadastrada.</p>`;
+            } else {
+                const medalhas = ["🥇 OURO", "🥈 PRATA", "🥉 BRONZE", "4º Lugar", "5º Lugar"];
+                const coresMedalhas = [
+                    "bg-yellow-500/10 border-yellow-500 text-yellow-400",
+                    "bg-gray-400/10 border-gray-400 text-gray-300",
+                    "bg-amber-700/10 border-amber-700 text-amber-500",
+                    "bg-gray-700/30 border-gray-600 text-gray-400",
+                    "bg-gray-700/30 border-gray-600 text-gray-400"
+                ];
+
+                const top5 = ranking.slice(0, 5);
+                top5.forEach((r, idx) => {
+                    podiumContainer.innerHTML += `
+                        <div class="flex items-center justify-between p-3 border rounded-xl transition ${coresMedalhas[idx]}">
+                            <div class="flex items-center gap-3">
+                                <span class="font-black text-sm uppercase tracking-wider px-2 py-0.5 rounded bg-gray-900/40">${medalhas[idx]}</span>
+                                <span class="font-bold text-sm tracking-wide">${r.peca}</span>
+                            </div>
+                            <div class="text-right">
+                                <span class="text-xs opacity-75">Repetições:</span>
+                                <span class="font-black text-base ml-1">${r.ocorrencias}x</span>
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+
+            const top10 = ranking.slice(0, 10);
+            const ctx = document.getElementById('chartGargalos').getContext('2d');
+            if (chartGargalosInstance) chartGargalosInstance.destroy();
+            
+            const optionsGargalos = JSON.parse(JSON.stringify(chartOptionsBase));
+            optionsGargalos.indexAxis = 'y';
+            optionsGargalos.scales.x.beginAtZero = true;
+            optionsGargalos.scales.x.suggestMax = 5;
+
+            chartGargalosInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: top10.length > 0 ? top10.map(r => r.peca) : ['Sem dados'],
+                    datasets: [{
+                        label: 'Ocorrências',
+                        data: top10.length > 0 ? top10.map(r => r.ocorrencias) : [0],
+                        backgroundColor: '#84cc16', 
+                        borderRadius: 4
+                    }]
+                },
+                options: optionsGargalos
+            });
+        }
+
+        function renderHistoricoLog() {
+            const container = document.getElementById('log-historico-container');
+            container.innerHTML = '';
+
+            const apenasFaltas = filteredData.filter(item => item && item.peca && item.peca.trim() !== '');
+
+            if(apenasFaltas.length === 0) {
+                container.innerHTML = `<p class="text-sm text-gray-500 text-center py-8">Nenhuma restrição de material registrada até o momento.</p>`;
+                return;
+            }
+
+            // Ordenação Cronológica Reversa (Eventos mais recentes no topo)
+            apenasFaltas.sort((a, b) => new Date(b.data) - new Date(a.data));
+
+            apenasFaltas.forEach(item => {
+                container.innerHTML += `
+                    <div class="bg-gray-900/60 border-l-4 border-l-red-500 border border-gray-700 p-3 rounded-r-lg text-sm transition hover:bg-gray-900">
+                        <div class="flex justify-between items-center mb-1 flex-wrap gap-2">
+                            <span class="text-xs bg-gray-800 text-gray-400 font-mono px-2 py-0.5 rounded border border-gray-700">📅 Data de Ocorrência: ${formatDate(item.data)}</span>
+                            <span class="text-xs font-bold text-red-400 bg-red-950/40 px-2 py-0.5 rounded border border-red-900/30">⚠️ FLUXO INTERROMPIDO</span>
+                        </div>
+                        <p class="text-gray-200 font-medium">
+                            O modelo <span class="text-white font-bold underline decoration-gray-600">${item.modelo}</span> associado à <span class="text-blue-400 font-bold">OV ${item.ov}</span> teve parada registrada por falta do componente <span class="text-yellow-400 font-bold">${item.peca.toUpperCase()}</span>.
+                        </p>
+                        <div class="mt-1.5 text-xs text-gray-400 flex gap-1">
+                            <span class="font-semibold">Categoria do desvio:</span>
+                            <span class="italic text-gray-300">${item.motivo || 'Não informado'}</span>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        function renderStatusOV() {
+            const statusOV = {};
+            filteredData.forEach(item => {
+                if (item && item.ov && item.saidaPrev && item.saidaReal) {
+                    statusOV[item.ov] = calcAderencia(item.saidaPrev, item.saidaReal);
+                } else if (item && item.ov && !statusOV[item.ov]) {
+                     statusOV[item.ov] = 0; 
+                }
+            });
+
+            const ovsUnicas = Object.keys(statusOV);
+            const tbody = document.getElementById('table-status-ov');
+            tbody.innerHTML = '';
+            
+            ovsUnicas.forEach(ov => {
+                tbody.innerHTML += `
+                    <tr class="border-b border-gray-700 hover:bg-gray-700 transition">
+                        <td class="p-2 border-r border-gray-700 text-right text-xs font-semibold">${ov}</td>
+                        <td class="p-2 text-center font-bold text-gray-200 text-xs">${statusOV[ov].toFixed(0)}%</td>
+                    </tr>
+                `;
+            });
+            for(let i = ovsUnicas.length; i < 6; i++) {
+                tbody.innerHTML += `<tr class="border-b border-gray-700"><td class="p-2 border-r border-gray-700 text-right text-gray-600 text-xs">-</td><td class="p-2 text-center text-gray-600 text-xs">0%</td></tr>`;
+            }
+
+            const ctx = document.getElementById('chartAderencia').getContext('2d');
+            if (chartAderenciaInstance) chartAderenciaInstance.destroy();
+            
+            const optionsAderencia = JSON.parse(JSON.stringify(chartOptionsBase));
+            optionsAderencia.scales.y.beginAtZero = true;
+            optionsAderencia.scales.y.max = 100;
+
+            chartAderenciaInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ovsUnicas.length > 0 ? ovsUnicas : ['Sem OVs'],
+                    datasets: [{
+                        label: 'Aderência (%)',
+                        data: ovsUnicas.length > 0 ? ovsUnicas.map(ov => statusOV[ov]) : [0],
+                        backgroundColor: '#3b82f6',
+                        borderRadius: 4
+                    }]
+                },
+                options: optionsAderencia
+            });
+        }
+    </script>
+</body>
+</html>
